@@ -1,7 +1,9 @@
 name: Sync Telegram upstream
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - update/telegram-13.2.2
 
 permissions:
   contents: write
