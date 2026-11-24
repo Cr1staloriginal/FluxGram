@@ -1,0 +1,104 @@
+name: Sync Telegram upstream
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fluxgram-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout FluxGram
+        uses: actions/checkout@v4
+        with:
+          ref: update/telegram-13.2.2
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch official Telegram source
+        run: |
+          git remote add telegram https://github.com/TelegramMessenger/Telegram-Android.git
+          git fetch telegram master
+
+      - name: Merge Telegram 13.2.2
+        id: merge
+        shell: bash
+        run: |
+          set +e
+          git merge --no-ff --no-edit telegram/master
+          result=$?
+          if [ "$result" -ne 0 ]; then
+            git diff --name-only --diff-filter=U > merge-conflicts.txt
+            echo "Merge has conflicts:"
+            cat merge-conflicts.txt
+            exit "$result"
+          fi
+
+      - name: Keep FluxGram identity and set upstream version
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("gradle.properties")
+          s = p.read_text()
+          import re
+          values = {
+              "APP_VERSION_CODE": "7303",
+              "APP_VERSION_NAME": "13.2.2",
+              "APP_PACKAGE": "org.fluxgram.messenger",
+          }
+          for key, value in values.items():
+              pattern = rf"(?m)^{key}=.*$"
+              if not re.search(pattern, s):
+                  raise SystemExit(f"Missing {key} in gradle.properties")
+              s = re.sub(pattern, f"{key}={value}", s)
+          p.write_text(s)
+          PY
+          git diff --check
+          grep -E '^(APP_VERSION_CODE|APP_VERSION_NAME|APP_PACKAGE)=' gradle.properties
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build components
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          yes | sdkmanager --licenses
+
+      - name: Build arm64 debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :TMessagesProj_App:assembleAfatDebug -Parm64Only --console=plain --no-daemon -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+
+      - name: Commit successful sync
+        run: |
+          git add -A
+          git commit -m "chore(upstream): sync Telegram 13.2.2 (7303)"
+          git push origin HEAD:update/telegram-13.2.2
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FluxGram-13.2.2-arm64-debug
+          path: |
+            TMessagesProj_App/build/outputs/apk/afat/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
