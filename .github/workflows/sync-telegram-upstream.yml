@@ -49,6 +49,9 @@ jobs:
             exit "$result"
           fi
 
+      - name: Update submodules to merged upstream revisions
+        run: git submodule update --init --recursive
+
       - name: Keep FluxGram identity and set upstream version
         run: |
           python3 - <<'PY'
@@ -92,8 +95,8 @@ jobs:
 
       - name: Commit successful sync
         run: |
-          git add -A
-          git commit -m "chore(upstream): sync Telegram 13.2.2 (7303)"
+          git add gradle.properties
+          git commit -m "chore(fluxgram): set version 13.2.2 (7303)"
           git push origin HEAD:update/telegram-13.2.2
 
       - name: Upload debug APK
